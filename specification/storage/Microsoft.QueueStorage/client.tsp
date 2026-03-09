@@ -53,3 +53,89 @@ interface QueueClient extends Storage.Queues.Queue {}
 );
 
 @@scope(Storage.Queues.Service.getUserDelegationKey, "!rust");
+
+// JavaScript SDK renames - based on azure-sdk-for-js storage-queue swagger README
+
+@@clientName(Storage.Queues.ReceivedMessage.insertionTime,
+  "insertedOn",
+  "javascript"
+);
+@@clientName(Storage.Queues.SentMessage.insertionTime,
+  "insertedOn",
+  "javascript"
+);
+@@clientName(Storage.Queues.PeekedMessage.insertionTime,
+  "insertedOn",
+  "javascript"
+);
+@@clientName(Storage.Queues.ReceivedMessage.expirationTime,
+  "expiresOn",
+  "javascript"
+);
+@@clientName(Storage.Queues.SentMessage.expirationTime,
+  "expiresOn",
+  "javascript"
+);
+@@clientName(Storage.Queues.PeekedMessage.expirationTime,
+  "expiresOn",
+  "javascript"
+);
+@@clientName(Storage.Queues.ReceivedMessage.timeNextVisible,
+  "nextVisibleOn",
+  "javascript"
+);
+@@clientName(Storage.Queues.SentMessage.timeNextVisible,
+  "nextVisibleOn",
+  "javascript"
+);
+@@clientName(Storage.Queues.TimeNextVisibleResponseHeader.timeNextVisible,
+  "nextVisibleOn",
+  "javascript"
+);
+@@clientName(Storage.Queues.TimeNextVisibleResponseHeaderPrivate.timeNextVisible,
+  "nextVisibleOn",
+  "javascript"
+);
+@@clientName(Storage.Queues.AccessPolicy.start, "startsOn", "javascript");
+@@clientName(Storage.Queues.AccessPolicy.expiry, "expiresOn", "javascript");
+@@clientName(Storage.Queues.AccessPolicy.permission,
+  "permissions",
+  "javascript"
+);
+@@clientName(Storage.Queues.UserDelegationKey.signedOid,
+  "signedObjectId",
+  "javascript"
+);
+@@clientName(Storage.Queues.UserDelegationKey.signedTid,
+  "signedTenantId",
+  "javascript"
+);
+@@clientName(Storage.Queues.UserDelegationKey.signedStart,
+  "signedStartsOn",
+  "javascript"
+);
+@@clientName(Storage.Queues.UserDelegationKey.signedExpiry,
+  "signedExpiresOn",
+  "javascript"
+);
+@@clientName(Storage.Queues.QueueServiceProperties.logging,
+  "queueAnalyticsLogging",
+  "javascript"
+);
+@@clientName(Storage.Queues.Logging.delete, "deleteProperty", "javascript");
+@@clientName(Storage.Queues.GeoReplication.lastSyncTime,
+  "lastSyncOn",
+  "javascript"
+);
+@@clientName(Storage.Queues.ListQueuesResponse.maxResults,
+  "maxPageSize",
+  "javascript"
+);
+@@clientName(Storage.Queues.ListQueuesResponse.nextMarker,
+  "continuationToken",
+  "javascript"
+);
+@@clientName(Storage.Queues.TimeoutParameter.timeout,
+  "timeoutInSeconds",
+  "javascript"
+);
