@@ -8,6 +8,11 @@ on:
   pull_request_review:
     types: [submitted]
 
+  # Re-run on label changes (any PR, not just tspconfig changes)
+  # This ensures status-check updates when approval labels are added/removed
+  issues:
+    types: [labeled, unlabeled]
+
 permissions:
   pull-requests: write
   contents: read
@@ -23,13 +28,12 @@ jobs:
           fetch-depth: 0
 
       - name: Detect namespace changes in tspconfig.yaml
-        id: detect
         uses: actions/github-script@v7
         with:
           script: |
             const { execSync } = require('child_process');
+            const fs = require('fs');
 
-            // Get changed files
             const base = context.payload.pull_request.base.sha;
             const head = context.payload.pull_request.head.sha;
             const diffOutput = execSync(`git diff --name-only ${base}...${head}`).toString().trim();
@@ -42,7 +46,6 @@ jobs:
 
             core.info(`Found tspconfig.yaml changes: ${changedFiles.join(', ')}`);
 
-            // Language emitter to label mapping
             const emitterMap = {
               '@azure-typespec/http-client-csharp': 'dotnet',
               '@azure-typespec/http-client-csharp-mgmt': 'dotnet',
@@ -58,19 +61,15 @@ jobs:
             let isDataPlane = false;
 
             for (const file of changedFiles) {
-              const fs = require('fs');
               if (!fs.existsSync(file)) continue;
-
               const content = fs.readFileSync(file, 'utf8');
 
-              // Detect mgmt vs data plane
               if (file.includes('.Management/') || content.includes('resource-manager')) {
                 isMgmt = true;
               } else {
                 isDataPlane = true;
               }
 
-              // Check if this is a new file (not in base)
               let isNew = false;
               try {
                 execSync(`git show ${base}:${file}`, { stdio: 'pipe' });
@@ -78,32 +77,25 @@ jobs:
                 isNew = true;
               }
 
-              // Parse namespace changes per emitter
               for (const [emitter, lang] of Object.entries(emitterMap)) {
-                // Extract namespace from current version
-                const nsRegex = new RegExp(`"?${emitter.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"?:[\\s\\S]*?namespace:\\s*["']?([^"'\\n]+)["']?`, 'm');
-                const pkgRegex = new RegExp(`"?${emitter.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"?:[\\s\\S]*?(?:name|module):\\s*["']?([^"'\\n]+)["']?`, 'm');
+                const escaped = emitter.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                const nsRegex = new RegExp(`"?${escaped}"?:[\\s\\S]*?namespace:\\s*["']?([^"'\\n]+)["']?`, 'm');
+                const pkgRegex = new RegExp(`"?${escaped}"?:[\\s\\S]*?(?:name|module):\\s*["']?([^"'\\n]+)["']?`, 'm');
 
                 const nsMatch = content.match(nsRegex);
                 const pkgMatch = content.match(pkgRegex);
                 const currentNs = nsMatch ? nsMatch[1].trim() : (pkgMatch ? pkgMatch[1].trim() : null);
-
                 if (!currentNs) continue;
 
                 if (isNew) {
-                  // New tspconfig = new namespace, always needs review
                   namespacesFound[lang] = currentNs;
                 } else {
-                  // Existing file - check if namespace changed
                   try {
                     const oldContent = execSync(`git show ${base}:${file}`, { encoding: 'utf8' });
                     const oldNsMatch = oldContent.match(nsRegex);
                     const oldPkgMatch = oldContent.match(pkgRegex);
                     const oldNs = oldNsMatch ? oldNsMatch[1].trim() : (oldPkgMatch ? oldPkgMatch[1].trim() : null);
-
-                    if (oldNs !== currentNs) {
-                      namespacesFound[lang] = currentNs;
-                    }
+                    if (oldNs !== currentNs) namespacesFound[lang] = currentNs;
                   } catch {
                     namespacesFound[lang] = currentNs;
                   }
@@ -125,227 +117,139 @@ jobs:
               labelsToAdd.push(`${lang}-namespace-pending`);
             }
 
-            // Ensure labels exist, then apply
             for (const label of labelsToAdd) {
               try {
-                await github.rest.issues.getLabel({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  name: label,
-                });
+                await github.rest.issues.getLabel({ owner: context.repo.owner, repo: context.repo.repo, name: label });
               } catch {
-                const colors = {
-                  'namespace-review-required': 'e11d48',
-                  'mgmt-namespace': 'c084fc',
-                  'data-namespace': '60a5fa',
-                };
-                const defaultColor = label.includes('pending') ? 'fbbf24' : '94a3b8';
+                const colors = { 'namespace-review-required': 'e11d48', 'mgmt-namespace': 'c084fc', 'data-namespace': '60a5fa' };
                 await github.rest.issues.createLabel({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  name: label,
-                  color: colors[label] || defaultColor,
+                  owner: context.repo.owner, repo: context.repo.repo, name: label,
+                  color: colors[label] || (label.includes('pending') ? 'fbbf24' : '94a3b8'),
                 });
               }
             }
 
             await github.rest.issues.addLabels({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.payload.pull_request.number,
-              labels: labelsToAdd,
+              owner: context.repo.owner, repo: context.repo.repo,
+              issue_number: context.payload.pull_request.number, labels: labelsToAdd,
             });
 
-            // Post comment with namespace details
+            // Post namespace details comment
             const planeType = isMgmt ? 'Management Plane' : 'Data Plane';
-            let body = `## Namespace Review Required\n\n`;
-            body += `**Plane:** ${planeType}\n\n`;
-            body += `### Detected Namespaces\n\n`;
-            body += `| Language | Proposed Namespace |\n`;
-            body += `|----------|-------------------|\n`;
+            const approvers = {
+              'dotnet': ['jsquire', 'm-nash'], 'java': ['JonathanGiles', 'alzimmermsft'],
+              'python': ['xirzec', 'kashifkhan'], 'typescript': ['xirzec', 'maorleger'],
+              'go': ['jhendrixMSFT'],
+            };
+            const mgmtApprovers = ['ArthurMa1978', 'm-nash'];
+
+            let body = `## Namespace Review Required\n\n**Plane:** ${planeType}\n\n`;
+            body += `### Detected Namespaces\n\n| Language | Proposed Namespace |\n|----------|-------------------|\n`;
             for (const [lang, ns] of Object.entries(namespacesFound)) {
               body += `| ${lang} | \`${ns}\` |\n`;
             }
             body += `\n### Approval Status\n\n`;
-
-            const approvers = {
-              'dotnet':     ['jsquire', 'm-nash'],
-              'java':       ['JonathanGiles', 'alzimmermsft'],
-              'python':     ['xirzec', 'kashifkhan'],
-              'typescript': ['xirzec', 'maorleger'],
-              'go':         ['jhendrixMSFT'],
-            };
-            const mgmtApprovers = ['ArthurMa1978', 'm-nash'];
-
             for (const lang of languages) {
-              const langApprovers = isMgmt ? mgmtApprovers : (approvers[lang] || ['TBD']);
-              body += `- [ ] **${lang}**: Waiting for approval from ${langApprovers.map(a => '@' + a).join(' or ')}\n`;
+              const la = isMgmt ? mgmtApprovers : (approvers[lang] || ['TBD']);
+              body += `- [ ] **${lang}**: Waiting for approval from ${la.map(a => '@' + a).join(' or ')}\n`;
             }
+            body += `\n### How to Approve\n\nAuthorized approvers: Apply the \`<language>-namespace-approved\` label or post a review comment with \`/approve-namespace <language>\`.\n`;
 
-            body += `\n### How to Approve\n\n`;
-            if (isMgmt) {
-              body += `Authorized approvers (${mgmtApprovers.map(a => '@' + a).join(', ')}): Add a PR review comment with \`/approve-namespace <language>\` or apply the \`<language>-namespace-approved\` label.\n`;
-            } else {
-              body += `Per-language architects: Add a PR review comment with \`/approve-namespace <language>\` or apply the \`<language>-namespace-approved\` label.\n`;
-            }
-
-            // Find and update or create comment
             const comments = await github.rest.issues.listComments({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
+              owner: context.repo.owner, repo: context.repo.repo,
               issue_number: context.payload.pull_request.number,
             });
-            const botComment = comments.data.find(c =>
-              c.user.type === 'Bot' && c.body.includes('## Namespace Review Required')
-            );
-
+            const botComment = comments.data.find(c => c.user.type === 'Bot' && c.body.includes('## Namespace Review Required'));
             if (botComment) {
               await github.rest.issues.updateComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                comment_id: botComment.id,
-                body,
+                owner: context.repo.owner, repo: context.repo.repo, comment_id: botComment.id, body,
               });
             } else {
               await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: context.payload.pull_request.number,
-                body,
+                owner: context.repo.owner, repo: context.repo.repo,
+                issue_number: context.payload.pull_request.number, body,
               });
             }
 
   validate-approval:
-    if: |
-      (github.event_name == 'pull_request' && (github.event.action == 'labeled')) ||
-      (github.event_name == 'pull_request_review' && github.event.review.state == 'approved')
+    if: github.event_name == 'pull_request' && github.event.action == 'labeled'
     runs-on: ubuntu-latest
     steps:
       - name: Check namespace approval labels
         uses: actions/github-script@v7
         with:
           script: |
-            const prNumber = context.payload.pull_request?.number || context.payload.pull_request_review?.pull_request?.number;
-            if (!prNumber) return;
+            const prNumber = context.payload.pull_request.number;
+            const labels = context.payload.pull_request.labels.map(l => l.name);
 
-            const { data: pr } = await github.rest.pulls.get({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: prNumber,
-            });
-
-            const labels = pr.labels.map(l => l.name);
-
-            // Only run if namespace review is required
             if (!labels.includes('namespace-review-required')) return;
 
             const isMgmt = labels.includes('mgmt-namespace');
+            const addedLabel = context.payload.label.name;
+            const match = addedLabel.match(/^(\w+)-namespace-approved$/);
+            if (!match) return;
 
-            // Authorized approvers per language
+            const lang = match[1];
+            const actor = context.payload.sender.login;
+
             const approvers = {
-              'dotnet':     ['jsquire', 'm-nash'],
-              'java':       ['JonathanGiles', 'alzimmermsft'],
-              'python':     ['xirzec', 'kashifkhan'],
-              'typescript': ['xirzec', 'maorleger'],
-              'go':         ['jhendrixMSFT'],
-              'cpp':        ['LarryOsterman'],
-              'rust':       ['heaths', 'LarryOsterman'],
+              'dotnet': ['jsquire', 'm-nash'], 'java': ['JonathanGiles', 'alzimmermsft'],
+              'python': ['xirzec', 'kashifkhan'], 'typescript': ['xirzec', 'maorleger'],
+              'go': ['jhendrixMSFT'], 'cpp': ['LarryOsterman'], 'rust': ['heaths', 'LarryOsterman'],
             };
             const mgmtApprovers = ['ArthurMa1978', 'm-nash'];
+            const authorizedList = isMgmt ? mgmtApprovers : (approvers[lang] || []);
 
-            // Check if a label was just added
-            if (github.event_name === 'pull_request' && context.payload.action === 'labeled') {
-              const addedLabel = context.payload.label.name;
-              const match = addedLabel.match(/^(\w+)-namespace-approved$/);
-              if (!match) return;
-
-              const lang = match[1];
-              const actor = context.payload.sender.login;
-              const authorizedList = isMgmt ? mgmtApprovers : (approvers[lang] || []);
-
-              if (!authorizedList.includes(actor)) {
-                // Unauthorized - remove label and comment
-                await github.rest.issues.removeLabel({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  issue_number: prNumber,
-                  name: addedLabel,
-                });
-
-                await github.rest.issues.createComment({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  issue_number: prNumber,
-                  body: `@${actor} You are not authorized to approve ${lang} namespace. Authorized approvers: ${authorizedList.map(a => '@' + a).join(', ')}. Label \`${addedLabel}\` has been removed.`,
-                });
-                return;
-              }
-
-              // Valid approval - remove pending label
-              const pendingLabel = `${lang}-namespace-pending`;
-              try {
-                await github.rest.issues.removeLabel({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  issue_number: prNumber,
-                  name: pendingLabel,
-                });
-              } catch {}
+            if (!authorizedList.includes(actor)) {
+              await github.rest.issues.removeLabel({
+                owner: context.repo.owner, repo: context.repo.repo, issue_number: prNumber, name: addedLabel,
+              });
+              await github.rest.issues.createComment({
+                owner: context.repo.owner, repo: context.repo.repo, issue_number: prNumber,
+                body: `@${actor} You are not authorized to approve ${lang} namespace. Authorized approvers: ${authorizedList.map(a => '@' + a).join(', ')}. Label \`${addedLabel}\` has been removed.`,
+              });
+              return;
             }
 
-            // Check if all pending labels are gone (all approved)
+            // Valid - remove pending label
+            try {
+              await github.rest.issues.removeLabel({
+                owner: context.repo.owner, repo: context.repo.repo, issue_number: prNumber, name: `${lang}-namespace-pending`,
+              });
+            } catch {}
+
+            // Check if all approved
             const { data: currentPR } = await github.rest.pulls.get({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: prNumber,
+              owner: context.repo.owner, repo: context.repo.repo, pull_number: prNumber,
             });
-            const currentLabels = currentPR.labels.map(l => l.name);
-            const pendingLabels = currentLabels.filter(l => l.endsWith('-namespace-pending'));
+            const pendingLabels = currentPR.labels.map(l => l.name).filter(l => l.endsWith('-namespace-pending'));
 
             if (pendingLabels.length === 0) {
-              // All namespaces approved - remove review-required, add approved
               try {
                 await github.rest.issues.removeLabel({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  issue_number: prNumber,
-                  name: 'namespace-review-required',
+                  owner: context.repo.owner, repo: context.repo.repo, issue_number: prNumber, name: 'namespace-review-required',
                 });
               } catch {}
 
-              // Ensure label exists
               try {
-                await github.rest.issues.getLabel({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  name: 'namespace-approved',
-                });
+                await github.rest.issues.getLabel({ owner: context.repo.owner, repo: context.repo.repo, name: 'namespace-approved' });
               } catch {
                 await github.rest.issues.createLabel({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  name: 'namespace-approved',
-                  color: '22c55e',
+                  owner: context.repo.owner, repo: context.repo.repo, name: 'namespace-approved', color: '22c55e',
                 });
               }
 
               await github.rest.issues.addLabels({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: prNumber,
-                labels: ['namespace-approved'],
+                owner: context.repo.owner, repo: context.repo.repo, issue_number: prNumber, labels: ['namespace-approved'],
               });
-
               await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: prNumber,
-                body: '## Namespace Approved\n\nAll required namespace approvals have been received. This PR is clear to merge from a namespace perspective.',
+                owner: context.repo.owner, repo: context.repo.repo, issue_number: prNumber,
+                body: '## Namespace Approved\n\nAll required namespace approvals received. This PR is clear to merge from a namespace perspective.',
               });
             }
 
   slash-command:
-    if: github.event_name == 'pull_request_review' && github.event.review.state == 'commented'
+    if: github.event_name == 'pull_request_review'
     runs-on: ubuntu-latest
     steps:
       - name: Process /approve-namespace commands
@@ -357,151 +261,105 @@ jobs:
             const prNumber = context.payload.pull_request.number;
             const actor = review.user.login;
 
-            // Match /approve-namespace <language>
             const matches = body.matchAll(/\/approve-namespace\s+(\w+)/gi);
             const languages = [...matches].map(m => m[1].toLowerCase());
-
             if (languages.length === 0) return;
 
             const labels = context.payload.pull_request.labels.map(l => l.name);
             if (!labels.includes('namespace-review-required')) {
               await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: prNumber,
-                body: `@${actor} This PR does not have \`namespace-review-required\` label. No action taken.`,
+                owner: context.repo.owner, repo: context.repo.repo, issue_number: prNumber,
+                body: `@${actor} This PR does not require namespace review. No action taken.`,
               });
               return;
             }
 
             const isMgmt = labels.includes('mgmt-namespace');
-
             const approvers = {
-              'dotnet':     ['jsquire', 'm-nash'],
-              'java':       ['JonathanGiles', 'alzimmermsft'],
-              'python':     ['xirzec', 'kashifkhan'],
-              'typescript': ['xirzec', 'maorleger'],
-              'go':         ['jhendrixMSFT'],
-              'cpp':        ['LarryOsterman'],
-              'rust':       ['heaths', 'LarryOsterman'],
+              'dotnet': ['jsquire', 'm-nash'], 'java': ['JonathanGiles', 'alzimmermsft'],
+              'python': ['xirzec', 'kashifkhan'], 'typescript': ['xirzec', 'maorleger'],
+              'go': ['jhendrixMSFT'], 'cpp': ['LarryOsterman'], 'rust': ['heaths', 'LarryOsterman'],
             };
             const mgmtApprovers = ['ArthurMa1978', 'm-nash'];
 
             const results = [];
-
             for (const lang of languages) {
               const authorizedList = isMgmt ? mgmtApprovers : (approvers[lang] || []);
-
               if (!authorizedList.includes(actor)) {
                 results.push(`- ${lang}: Not authorized. Approved by: ${authorizedList.map(a => '@' + a).join(', ')}`);
                 continue;
               }
 
-              // Apply approved label, remove pending
               const approvedLabel = `${lang}-namespace-approved`;
-              const pendingLabel = `${lang}-namespace-pending`;
-
-              // Ensure approved label exists
               try {
-                await github.rest.issues.getLabel({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  name: approvedLabel,
-                });
+                await github.rest.issues.getLabel({ owner: context.repo.owner, repo: context.repo.repo, name: approvedLabel });
               } catch {
                 await github.rest.issues.createLabel({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  name: approvedLabel,
-                  color: '22c55e',
+                  owner: context.repo.owner, repo: context.repo.repo, name: approvedLabel, color: '22c55e',
                 });
               }
 
               await github.rest.issues.addLabels({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: prNumber,
-                labels: [approvedLabel],
+                owner: context.repo.owner, repo: context.repo.repo, issue_number: prNumber, labels: [approvedLabel],
               });
-
               try {
                 await github.rest.issues.removeLabel({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  issue_number: prNumber,
-                  name: pendingLabel,
+                  owner: context.repo.owner, repo: context.repo.repo, issue_number: prNumber, name: `${lang}-namespace-pending`,
                 });
               } catch {}
-
               results.push(`- ${lang}: Approved by @${actor}`);
             }
 
-            // Post result
             await github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: prNumber,
+              owner: context.repo.owner, repo: context.repo.repo, issue_number: prNumber,
               body: `### Namespace Approval Update\n\n${results.join('\n')}`,
             });
 
-            // Check if all pending are gone
+            // Check if all approved
             const { data: currentPR } = await github.rest.pulls.get({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: prNumber,
+              owner: context.repo.owner, repo: context.repo.repo, pull_number: prNumber,
             });
-            const currentLabels = currentPR.labels.map(l => l.name);
-            const pendingLabels = currentLabels.filter(l => l.endsWith('-namespace-pending'));
-
+            const pendingLabels = currentPR.labels.map(l => l.name).filter(l => l.endsWith('-namespace-pending'));
             if (pendingLabels.length === 0) {
               try {
                 await github.rest.issues.removeLabel({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  issue_number: prNumber,
-                  name: 'namespace-review-required',
+                  owner: context.repo.owner, repo: context.repo.repo, issue_number: prNumber, name: 'namespace-review-required',
                 });
               } catch {}
-
               try {
-                await github.rest.issues.getLabel({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  name: 'namespace-approved',
-                });
+                await github.rest.issues.getLabel({ owner: context.repo.owner, repo: context.repo.repo, name: 'namespace-approved' });
               } catch {
                 await github.rest.issues.createLabel({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  name: 'namespace-approved',
-                  color: '22c55e',
+                  owner: context.repo.owner, repo: context.repo.repo, name: 'namespace-approved', color: '22c55e',
                 });
               }
-
               await github.rest.issues.addLabels({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: prNumber,
-                labels: ['namespace-approved'],
+                owner: context.repo.owner, repo: context.repo.repo, issue_number: prNumber, labels: ['namespace-approved'],
               });
-
               await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: prNumber,
-                body: '## Namespace Approved\n\nAll required namespace approvals have been received. This PR is clear to merge from a namespace perspective.',
+                owner: context.repo.owner, repo: context.repo.repo, issue_number: prNumber,
+                body: '## Namespace Approved\n\nAll required namespace approvals received. This PR is clear to merge from a namespace perspective.',
               });
             }
 
   status-check:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
+    needs: [detect-namespaces]
+    # Always run even if detect-namespaces was skipped
+    if: always() && github.event_name == 'pull_request'
     steps:
       - name: Verify namespace approval status
         uses: actions/github-script@v7
         with:
           script: |
-            const labels = context.payload.pull_request.labels.map(l => l.name);
+            // Use API to get CURRENT labels (not event payload which may be stale)
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.payload.pull_request.number,
+            });
+            const labels = pr.labels.map(l => l.name);
 
             if (!labels.includes('namespace-review-required')) {
               core.info('No namespace review required, passing');
