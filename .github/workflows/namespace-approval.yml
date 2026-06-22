@@ -169,6 +169,28 @@ jobs:
             }
             await github.rest.issues.addLabels({ owner: context.repo.owner, repo: context.repo.repo, issue_number: prNumber, labels: labelsToAdd });
 
+            // Format validation
+            let formatResults = {};
+            try {
+              const rulesYaml = fs.readFileSync('.github/namespace-format-rules.yml', 'utf8');
+              const rules = yaml.load(rulesYaml);
+              for (const [lang, ns] of Object.entries(namespacesFound)) {
+                const langRules = rules[lang];
+                if (!langRules) { formatResults[lang] = { valid: true, note: 'no rules defined' }; continue; }
+                const ruleList = Array.isArray(langRules) ? langRules : [langRules];
+                let matched = false;
+                for (const rule of ruleList) {
+                  if (new RegExp(rule.pattern).test(ns)) { formatResults[lang] = { valid: true, note: rule.description }; matched = true; break; }
+                }
+                if (!matched) {
+                  const expected = ruleList.map(r => r.description || r.pattern).join(' OR ');
+                  formatResults[lang] = { valid: false, note: expected };
+                }
+              }
+            } catch (e) {
+              core.warning('Format rules not found, skipping format validation: ' + e.message);
+            }
+
             // Build bot comment
             const getApprovers = (lang) => {
               if (isMgmt && approversConfig['management-plane']?.all) return approversConfig['management-plane'].all;
@@ -177,10 +199,13 @@ jobs:
 
             const planeType = isMgmt ? 'Management Plane' : 'Data Plane';
             let body = `## Namespace Review Required\n\n**Plane:** ${planeType}\n\n`;
-            body += `| Language | Proposed Namespace | Status | Approvers |\n`;
-            body += `|----------|-------------------|--------|----------|\n`;
+            body += `| Language | Proposed Namespace | Format | Status | Approvers |\n`;
+            body += `|----------|-------------------|--------|--------|----------|\n`;
             for (const [lang, ns] of Object.entries(namespacesFound)) {
-              body += `| ${lang} | \`${ns}\` | ⏳ Pending | ${getApprovers(lang).join(', ')} |\n`;
+              const fmt = formatResults[lang];
+              const fmtIcon = !fmt ? '—' : fmt.valid ? '✅' : '❌';
+              const fmtNote = fmt && !fmt.valid ? ` ${fmt.note}` : '';
+              body += `| ${lang} | \`${ns}\` | ${fmtIcon}${fmtNote} | ⏳ Pending | ${getApprovers(lang).join(', ')} |\n`;
             }
             body += `\n**How to approve:**\n`;
             body += `- Per language: apply \`<language>-namespace-approved\` label\n`;
