@@ -17,6 +17,7 @@ const EMITTER_TO_LANG = {
   "typespec-python": "python",
   "typespec-ts": "typescript",
   "typespec-go": "go",
+  "typespec-rust": "rust",
 };
 
 /**
@@ -124,7 +125,7 @@ async function extractNamespaces(file, namespacesFound, core) {
       continue;
     }
 
-    // Prefer `namespace`, fall back to `package-details.name`
+    // Prefer `namespace`, fall back to `package-details.name`, `module`, `crate-name`
     const ns = /** @type {string | undefined} */ (emitterOpts.namespace);
     if (ns) {
       namespacesFound[lang] = ns;
@@ -136,6 +137,18 @@ async function extractNamespaces(file, namespacesFound, core) {
     );
     if (packageDetails?.name) {
       namespacesFound[lang] = String(packageDetails.name);
+      continue;
+    }
+
+    const module = /** @type {string | undefined} */ (emitterOpts.module);
+    if (module) {
+      namespacesFound[lang] = module;
+      continue;
+    }
+
+    const crateName = /** @type {string | undefined} */ (emitterOpts["crate-name"]);
+    if (crateName) {
+      namespacesFound[lang] = crateName;
     }
   }
 
