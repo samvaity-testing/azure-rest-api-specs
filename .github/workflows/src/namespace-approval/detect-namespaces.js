@@ -102,12 +102,16 @@ async function extractNamespaces(file, namespacesFound, core) {
     return { isMgmt, isDataPlane };
   }
 
-  // Check linter extends for management indicator
+  // Linter extends is the most reliable plane indicator — override path-based guess
   const linter = /** @type {Record<string, unknown> | undefined} */ (config.linter);
   if (linter) {
     const linterExtends = /** @type {string[] | undefined} */ (linter.extends);
     if (linterExtends?.some((e) => e.includes("resource-manager"))) {
       isMgmt = true;
+      isDataPlane = false;
+    } else if (linterExtends?.some((e) => e.includes("data-plane"))) {
+      isDataPlane = true;
+      isMgmt = false;
     }
   }
 
