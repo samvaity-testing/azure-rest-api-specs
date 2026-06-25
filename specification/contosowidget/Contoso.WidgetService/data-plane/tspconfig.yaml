@@ -1,0 +1,20 @@
+linter:
+  extends:
+    - "@azure-tools/typespec-azure-rulesets/data-plane"
+
+options:
+  "@azure-tools/typespec-csharp":
+    namespace: Azure.Analytics.Widgets
+    clear-output-folder: true
+  "@azure-tools/typespec-java":
+    namespace: com.azure.analytics.widgets
+    clear-output-folder: true
+  "@azure-tools/typespec-python":
+    namespace: azure.analytics.widgets
+    package-name: azure-analytics-widgets
+  "@azure-tools/typespec-ts":
+    package-details:
+      name: "@azure/analytics-widgets"
+    clear-output-folder: true
+  "@azure-tools/typespec-go":
+    module: github.com/Azure/azure-sdk-for-go/sdk/analytics/azwidgets
