@@ -1,8 +1,7 @@
-import { access, readFile, writeFile } from "fs/promises";
+import { readFile, writeFile } from "fs/promises";
 import yaml from "js-yaml";
-import { dirname, join } from "path";
+import { join } from "path";
 import { getChangedFiles } from "../../../shared/src/changed-files.js";
-import { execFile } from "../../../shared/src/exec.js";
 import { loadFormatRules, validateNamespaceFormat } from "./validate-format.js";
 
 /**
@@ -19,38 +18,6 @@ const EMITTER_TO_LANG = {
   "typespec-go": "go",
   "typespec-rust": "rust",
 };
-
-/**
- * @param {string} path
- * @returns {Promise<boolean>}
- */
-async function exists(path) {
-  try {
-    await access(path);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Sparse checkout only materializes .github/, so hydrate changed TypeSpec directories on demand.
- *
- * @param {string} file
- * @param {import("@actions/core")} core
- */
-async function ensureTypeSpecFilesAvailable(file, core) {
-  if (await exists(file)) {
-    return;
-  }
-
-  const tspDir = dirname(file);
-  const workspace = process.env.GITHUB_WORKSPACE ?? process.cwd();
-  core.info(`Hydrating ${tspDir} from git for namespace detection`);
-  await execFile("git", ["sparse-checkout", "add", tspDir], {
-    cwd: workspace,
-  });
-}
 
 /**
  * Resolve the normalized language from an emitter package name.
@@ -80,12 +47,6 @@ function resolveLanguage(emitterKey) {
 async function extractNamespaces(file, namespacesFound, core) {
   let isMgmt = false;
   let isDataPlane = false;
-
-  await ensureTypeSpecFilesAvailable(file, core);
-  if (!(await exists(file))) {
-    core.info(`Skipping missing file: ${file}`);
-    return { isMgmt, isDataPlane };
-  }
 
   if (file.includes(".Management/") || file.includes("/resource-manager/")) {
     isMgmt = true;
@@ -202,7 +163,7 @@ export default async function detectNamespaces({ context, core }) {
     const formatRules = loadFormatRules(core);
     /** @type {Record<string, import("./validate-format.js").FormatValidationResult>} */
     const formatResults = {};
-    if (formatRules) {
+    if (formatRules && isMgmt) {
       for (const [language, namespace] of Object.entries(namespacesFound)) {
         formatResults[language] = validateNamespaceFormat(language, namespace, formatRules);
       }

@@ -221,7 +221,10 @@ async function handleLabeled({
   if (botComment?.body) {
     let body = botComment.body;
     for (const lang of langsToApprove) {
-      const rowRegex = new RegExp(`(\\| ${lang} \\|[^|]+\\|) ⏳ Pending (\\|)`, "i");
+      const rowRegex = new RegExp(
+        `(\\| ${lang} \\|[^|]+\\|[^|]+\\|) ⏳ Pending (\\|)`,
+        "i",
+      );
       body = body.replace(rowRegex, `$1 ✅ Approved by @${actor} $2`);
     }
     await github.rest.issues.updateComment({

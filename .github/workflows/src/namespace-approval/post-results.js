@@ -31,11 +31,6 @@ const NamespaceResultsSchema = z.object({
  * @property {{ all?: string[] }} [management-plane]
  */
 
-/** @type {Record<string, string>} */
-const LABEL_COLORS = {
-  "namespace-review-required": "e11d48",
-};
-
 /**
  * @param {import("@actions/core")} core
  * @returns {Promise<ApproversConfig | null>}
@@ -96,30 +91,6 @@ async function downloadNamespaceResults(github, core, owner, repo, runId) {
     );
   } finally {
     await unlink(zipPath).catch(() => undefined);
-  }
-}
-
-/**
- * @param {import("@actions/github-script").AsyncFunctionArguments["github"]} github
- * @param {string} owner
- * @param {string} repo
- * @param {string} label
- */
-async function ensureLabel(github, owner, repo, label) {
-  try {
-    await github.rest.issues.getLabel({
-      owner,
-      repo,
-      name: label,
-    });
-  } catch {
-    await github.rest.issues.createLabel({
-      owner,
-      repo,
-      name: label,
-      // cspell:ignore fbbf
-      color: LABEL_COLORS[label] ?? (label.includes("pending") ? "fbbf24" : "94a3b8"),
-    });
   }
 }
 
@@ -266,19 +237,31 @@ export default async function postResults({ github, context, core }) {
     labelsToAdd.add("data-plane");
   }
   for (const language of languages) {
-    labelsToAdd.add(`${language}-namespace-pending`);
+    // Skip adding pending label if language is already approved
+    const approvedLabel = `${language}-namespace-approved`;
+    if (!existingLabels.includes(approvedLabel)) {
+      labelsToAdd.add(`${language}-namespace-pending`);
+    }
+  }
+
+  // Don't re-add namespace-review-required if everything is already approved
+  const allApproved = languages.every((lang) =>
+    existingLabels.includes(`${lang}-namespace-approved`),
+  );
+  if (allApproved && languages.length > 0) {
+    labelsToAdd.delete("namespace-review-required");
   }
 
   for (const label of labelsToAdd) {
-    await ensureLabel(github, owner, repo, label);
+    if (!existingLabels.includes(label)) {
+      await github.rest.issues.addLabels({
+        owner,
+        repo,
+        issue_number,
+        labels: [label],
+      });
+    }
   }
-
-  await github.rest.issues.addLabels({
-    owner,
-    repo,
-    issue_number,
-    labels: [...labelsToAdd],
-  });
 
   const body = buildCommentBody({
     approversConfig,
