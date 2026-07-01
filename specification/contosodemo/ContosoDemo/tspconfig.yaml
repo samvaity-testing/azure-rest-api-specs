@@ -1,3 +1,4 @@
+# ContosoDemo namespace configuration
 parameters:
   "service-dir":
     default: "sdk/contosodemo"
