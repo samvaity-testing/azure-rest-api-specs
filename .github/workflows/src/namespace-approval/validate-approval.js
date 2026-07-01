@@ -103,10 +103,7 @@ async function handleLabeled({
   let langsToApprove;
 
   if (targetLabel === "namespace-approved-all") {
-    /** @type {string[]} */
-    const allApprovers = getAllApprovers(approversConfig);
-
-    if (!allApprovers.includes(actor)) {
+    if (!isMgmt) {
       await github.rest.issues.removeLabel({
         owner: context.repo.owner,
         repo: context.repo.repo,
@@ -117,7 +114,26 @@ async function handleLabeled({
         owner: context.repo.owner,
         repo: context.repo.repo,
         issue_number: prNumber,
-        body: `⚠️ @${actor} is not authorized to use \`namespace-approved-all\`. This shortcut is available to authorized namespace approvers.\n\nLabel removed.`,
+        body: `⚠️ \`namespace-approved-all\` is only available for management-plane PRs. Data-plane PRs require individual per-language approvals.\n\nLabel removed.`,
+      });
+      return;
+    }
+
+    /** @type {string[]} */
+    const mgmtApprovers = approversConfig["management-plane"]?.all ?? [];
+
+    if (!mgmtApprovers.includes(actor)) {
+      await github.rest.issues.removeLabel({
+        owner: context.repo.owner,
+        repo: context.repo.repo,
+        issue_number: prNumber,
+        name: targetLabel,
+      });
+      await github.rest.issues.createComment({
+        owner: context.repo.owner,
+        repo: context.repo.repo,
+        issue_number: prNumber,
+        body: `⚠️ @${actor} is not authorized to use \`namespace-approved-all\`. Authorized management-plane approvers: ${mgmtApprovers.join(", ")}.\n\nLabel removed.`,
       });
       return;
     }

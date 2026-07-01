@@ -178,12 +178,13 @@ describe("validate-approval", () => {
   });
 
   describe("labeled - namespace-approved-all shortcut", () => {
-    it("should approve all pending languages for authorized user", async () => {
+    it("should approve all pending languages for authorized user on mgmt PR", async () => {
       context.payload = createPRLabeledPayload({
         action: "labeled",
         labelName: "namespace-approved-all",
         actor: "ArthurMa1978",
         labels: ["namespace-review-required", "dotnet-namespace-pending", "java-namespace-pending"],
+        isMgmt: true,
       });
 
       github.rest.pulls.get.mockResolvedValue({
@@ -203,7 +204,7 @@ describe("validate-approval", () => {
       );
     });
 
-    it("should reject namespace-approved-all from unauthorized user", async () => {
+    it("should reject namespace-approved-all on data-plane PR", async () => {
       context.payload = createPRLabeledPayload({
         action: "labeled",
         labelName: "namespace-approved-all",
@@ -219,7 +220,7 @@ describe("validate-approval", () => {
       expect(github.rest.issues.createComment).toHaveBeenCalled();
       const calls = vi.mocked(github.rest.issues.createComment).mock.calls;
       const commentBody = String(/** @type {Record<string, unknown>} */ (calls[0][0]).body);
-      expect(commentBody).toContain("not authorized");
+      expect(commentBody).toContain("only available for management-plane");
     });
   });
 
