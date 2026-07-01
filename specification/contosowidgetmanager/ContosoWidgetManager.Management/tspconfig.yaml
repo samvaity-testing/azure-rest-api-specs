@@ -1,0 +1,37 @@
+parameters:
+  "service-dir":
+    default: "sdk/contosowidgetmanager"
+output-dir: "{project-root}/../"
+emit:
+  - "@azure-tools/typespec-autorest"
+linter:
+  extends:
+    - "@azure-tools/typespec-azure-rulesets/resource-manager"
+options:
+  "@azure-tools/typespec-autorest":
+    azure-resource-provider-folder: "resource-manager"
+    emitter-output-dir: "{project-root}/.."
+    output-file: "{azure-resource-provider-folder}/{service-name}/{version-status}/{version}/ContosoWidgetManager.json"
+  "@azure-tools/typespec-csharp":
+    emitter-output-dir: "{output-dir}/{service-dir}/Azure.ResourceManager.ContosoWidget"
+    namespace: Azure.ResourceManager.ContosoWidget
+    flavor: azure
+  "@azure-tools/typespec-java":
+    emitter-output-dir: "{output-dir}/{service-dir}/azure-resourcemanager-contosowidget"
+    namespace: "com.azure.resourcemanager.contosowidget"
+    flavor: azure
+  "@azure-tools/typespec-python":
+    emitter-output-dir: "{output-dir}/{service-dir}/azure-mgmt-contosowidget"
+    namespace: "azure.mgmt.contosowidget"
+    flavor: azure
+  "@azure-tools/typespec-ts":
+    emitter-output-dir: "{output-dir}/{service-dir}/arm-contosowidget"
+    package-details:
+      name: "@azure/arm-contosowidget"
+      description: "Contoso Widget Manager ARM Client"
+    flavor: azure
+  "@azure-tools/typespec-go":
+    service-dir: "sdk/resourcemanager/contosowidget"
+    emitter-output-dir: "{output-dir}/{service-dir}/armcontosowidget"
+    module: "github.com/Azure/azure-sdk-for-go/{service-dir}/armcontosowidget"
+    flavor: azure
