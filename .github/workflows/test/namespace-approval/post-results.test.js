@@ -95,10 +95,11 @@ describe("post-results", () => {
 
       const result = parseCommentTable(body);
 
-      // First match (package) is kept, artifact row is skipped
+      // First match (package) is kept, artifact is attached
       expect(result.get("java")).toEqual({
         namespace: "com.azure.resourcemanager.compute",
         status: "⏳ Pending",
+        artifact: "azure-resourcemanager-compute",
       });
       expect(result.size).toBe(1);
     });

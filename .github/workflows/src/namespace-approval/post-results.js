@@ -146,23 +146,28 @@ function getApprovers(approversConfig, isMgmt, language) {
  * Extracts language, namespace, and approval status from each row.
  *
  * @param {string} body - The full comment body.
- * @returns {Map<string, { namespace: string, status: string }>}
+ * @returns {Map<string, { namespace: string, status: string, artifact?: string }>}
  */
 export function parseCommentTable(body) {
-  /** @type {Map<string, { namespace: string, status: string }>} */
+  /** @type {Map<string, { namespace: string, status: string, artifact?: string }>} */
   const results = new Map();
   // Table row: | language (possibly with suffix) | `namespace` | format | status | approvers |
   // Captures the base language name (word chars before optional space/underscore/paren suffix)
-  const rowRegex = /\| (\w+)[^|]*\| `([^`]+)` \| [^|]+ \| ([^|]+) \|/g;
+  const rowRegex = /\| (\w+)([^|]*)\| `([^`]+)` \| [^|]+ \| ([^|]+) \|/g;
   let match;
   while ((match = rowRegex.exec(body)) !== null) {
     const lang = match[1];
-    // Keep only the first match per language (primary namespace, not artifact)
-    if (!results.has(lang)) {
-      results.set(lang, {
-        namespace: match[2],
-        status: match[3].trim(),
-      });
+    const suffix = match[2].trim();
+    const value = match[3];
+    const status = match[4].trim();
+    if (suffix.includes("artifact")) {
+      // Attach artifact to existing entry
+      const existing = results.get(lang);
+      if (existing) {
+        existing.artifact = value;
+      }
+    } else if (!results.has(lang)) {
+      results.set(lang, { namespace: value, status });
     }
   }
   return results;
@@ -278,7 +283,7 @@ export default async function postResults({ github, context, core }) {
       per_page: PER_PAGE_MAX,
     });
     const [, existingBody] = parseExistingComments(comments, "namespace-review-bot");
-    /** @type {Map<string, { namespace: string, status: string }>} */
+    /** @type {Map<string, { namespace: string, status: string, artifact?: string }>} */
     const previousTable = existingBody ? parseCommentTable(existingBody) : new Map();
 
     for (const language of languages) {
@@ -296,10 +301,25 @@ export default async function postResults({ github, context, core }) {
           existingLabels.splice(existingLabels.indexOf(approvedLabel), 1);
         }
         resetLanguages.push(language);
-      } else if (prev.status && !prev.status.includes("Pending")) {
-        // Namespace unchanged and previously approved: preserve status
-        core.info(`Namespace unchanged for ${language}: "${newNs}", preserving approval`);
-        preservedApprovals.set(language, prev);
+      } else {
+        // Namespace unchanged - also check if artifact name changed
+        const newArtifact = results.artifactNames[language];
+        const prevArtifact = prev.artifact;
+        if (newArtifact && prevArtifact && newArtifact !== prevArtifact) {
+          const approvedLabel = `${language}-namespace-approved`;
+          if (existingLabels.includes(approvedLabel)) {
+            core.info(
+              `Artifact changed for ${language}: "${prevArtifact}" → "${newArtifact}", resetting approval`,
+            );
+            await removeLabelIfPresent(github, owner, repo, issue_number, approvedLabel);
+            existingLabels.splice(existingLabels.indexOf(approvedLabel), 1);
+          }
+          resetLanguages.push(language);
+        } else if (prev.status && !prev.status.includes("Pending")) {
+          // Namespace and artifact unchanged and previously approved: preserve status
+          core.info(`Namespace unchanged for ${language}: "${newNs}", preserving approval`);
+          preservedApprovals.set(language, prev);
+        }
       }
     }
 
