@@ -8,19 +8,25 @@ data-plane:
   dotnet:
     - jsquire
     - m-nash
+    - samvaity
   java:
     - JonathanGiles
     - alzimmermsft
+    - samvaity
   python:
     - xirzec
     - kashifkhan
+    - samvaity
   typescript:
     - xirzec
     - maorleger
+    - samvaity
   go:
     - jhendrixMSFT
+    - samvaity
 
 management-plane:
   all:
     - ArthurMa1978
     - m-nash
+    - samvaity
