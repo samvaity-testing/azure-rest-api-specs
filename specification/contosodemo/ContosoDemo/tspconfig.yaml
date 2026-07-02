@@ -1,4 +1,4 @@
-# ContosoDemo namespace configuration
+# ContosoDemo namespace configuration for data-plane
 parameters:
   "service-dir":
     default: "sdk/contosodemo"
