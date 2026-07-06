@@ -1,0 +1,38 @@
+# ContosoDemo2 namespace configuration for data-plane (NSTM test)
+parameters:
+  "service-dir":
+    default: "sdk/contosodemo2"
+output-dir: "{project-root}/../"
+emit:
+  - "@azure-tools/typespec-autorest"
+linter:
+  extends:
+    - "@azure-tools/typespec-azure-rulesets/data-plane"
+options:
+  "@azure-tools/typespec-autorest":
+    azure-resource-provider-folder: "data-plane"
+    emitter-output-dir: "{project-root}/.."
+    output-file: "{azure-resource-provider-folder}/{service-name}/{version-status}/{version}/ContosoDemo2.json"
+  "@azure-tools/typespec-csharp":
+    emitter-output-dir: "{output-dir}/{service-dir}/{namespace}"
+    namespace: Azure.ContosoDemo2
+    flavor: azure
+  "@azure-tools/typespec-java":
+    emitter-output-dir: "{output-dir}/{service-dir}/azure-contoso-demo2"
+    namespace: "com.azure.contosodemo2"
+    flavor: azure
+  "@azure-tools/typespec-python":
+    emitter-output-dir: "{output-dir}/{service-dir}/azure-contosodemo2"
+    namespace: "azure.contosodemo2"
+    flavor: azure
+  "@azure-tools/typespec-ts":
+    emitter-output-dir: "{output-dir}/{service-dir}/contosodemo2-rest"
+    package-details:
+      name: "@azure-rest/contoso-demo2"
+      description: "Contoso Demo 2 Rest Client"
+    flavor: azure
+  "@azure-tools/typespec-go":
+    service-dir: "sdk/contosodemo2"
+    emitter-output-dir: "{output-dir}/{service-dir}/azcontosodemo2"
+    module: "github.com/Azure/azure-sdk-for-go/{service-dir}/azcontosodemo2"
+    flavor: azure
